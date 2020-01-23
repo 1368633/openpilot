@@ -11,8 +11,8 @@ VisualAlert = car.CarControl.HUDControl.VisualAlert
 
 # Accel limits
 ACCEL_HYST_GAP = 0.02  # don't change accel command for small oscilalitons within this value
-ACCEL_MAX = 1.5  # 1.5 m/s2
-ACCEL_MIN = -3.0 # 3   m/s2
+ACCEL_MAX = 3.5  # 1.5 m/s2
+ACCEL_MIN = -3.5 # 3   m/s2
 ACCEL_SCALE = max(ACCEL_MAX, -ACCEL_MIN)
 
 
@@ -126,21 +126,38 @@ class CarController():
     apply_accel, self.accel_steady = accel_hysteresis(apply_accel, self.accel_steady, enabled)
     apply_accel = clip(apply_accel * ACCEL_SCALE, ACCEL_MIN, ACCEL_MAX)
 
+    if CS.CP.enableGasInterceptor:
+      if CS.pedal_gas > 15.0:
+        apply_accel = max(apply_accel, 0.06)
+      if CS.brake_pressed:
+        apply_gas = 0.0
+        apply_accel = min(apply_accel, 0.00)
+    else:
+      if CS.pedal_gas > 0.0:
+        apply_accel = max(apply_accel, 0.0)
+      if CS.brake_pressed and CS.v_ego > 1:
+        apply_accel = min(apply_accel, 0.0)
+
     # steer torque
     new_steer = int(round(actuators.steer * SteerLimitParams.STEER_MAX))
-    apply_steer = apply_toyota_steer_torque_limits(new_steer, self.last_steer, CS.steer_torque_motor, SteerLimitParams)
-    self.steer_rate_limited = new_steer != apply_steer
 
     # only cut torque when steer state is a known fault
     if CS.steer_state in [9, 25]:
       self.last_fault_frame = frame
 
     # Cut steering for 2s after fault
-    if not enabled or (frame - self.last_fault_frame < 200):
-      apply_steer = 0
+    if (frame - self.last_fault_frame < 200) or abs(CS.angle_steers) > 100 or abs(CS.angle_steers_rate) > 100:
+      new_steer = 0
       apply_steer_req = 0
     else:
       apply_steer_req = 1
+      
+    apply_steer = apply_toyota_steer_torque_limits(new_steer, self.last_steer, CS.steer_torque_motor, SteerLimitParams)
+    self.steer_rate_limited = new_steer != apply_steer
+    
+    if not enabled:
+      apply_steer = 0
+      apply_steer_req = 0
 
     self.steer_angle_enabled, self.ipas_reset_counter = \
       ipas_state_transition(self.steer_angle_enabled, enabled, CS.ipas_active, self.ipas_reset_counter)
